@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -17,3 +17,17 @@ jobs:
         with:
           node-version: 22
       - run: npm test
+      - run: npm run build:standalone
+      - name: Verify standalone artifact on pull requests
+        if: github.event_name == 'pull_request'
+        run: git diff --exit-code -- WorkLog.html
+      - name: Refresh standalone artifact on main
+        if: github.event_name == 'push'
+        run: |
+          if ! git diff --quiet -- WorkLog.html; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add WorkLog.html
+            git commit -m "Build standalone WorkLog artifact [skip ci]"
+            git push
+          fi
