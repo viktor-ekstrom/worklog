@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "build:standalone": "node scripts/build-standalone.mjs"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }
