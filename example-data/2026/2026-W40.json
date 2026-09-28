@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "week": "2026-W40",
+  "startDate": "2026-09-28",
+  "endDate": "2026-10-04",
+  "entries": [
+    {
+      "id": "example-architecture-sync",
+      "type": "meeting",
+      "date": "2026-09-28",
+      "time": "09:00",
+      "title": "Architecture sync",
+      "participants": ["Anna", "Johan"],
+      "topics": ["Target architecture", "Platform"],
+      "discussion": [
+        "Discussed ownership of validation between teams.",
+        "Current implementation duplicates logic."
+      ],
+      "contribution": [
+        "Suggested moving validation into the domain service.",
+        "Proposed separating ingestion from transformation."
+      ],
+      "decisions": ["Prototype domain-service validation."],
+      "followUps": [{ "text": "Create technical spike", "reference": "ABC-123" }],
+      "references": [{ "type": "jira", "value": "ABC-123" }]
+    },
+    {
+      "id": "example-auth",
+      "type": "work",
+      "date": "2026-09-28",
+      "time": "11:30",
+      "title": "Authentication changes",
+      "topics": ["Bingo"],
+      "summary": "Implemented the new authentication flow and fixed a token refresh issue.",
+      "outcome": "Authentication survives page reloads reliably."
+    },
+    {
+      "id": "example-coffee",
+      "type": "conversation",
+      "date": "2026-09-28",
+      "time": "15:00",
+      "title": "Coffee with Peter",
+      "participants": ["Peter"],
+      "topics": ["2027 roadmap"],
+      "summary": "Discussed potential Q1 priorities.",
+      "notes": ["Platform modernization may become a Q1 priority."]
+    }
+  ],
+  "weeklyReflection": {
+    "highlights": [],
+    "outcomes": [],
+    "challenges": [],
+    "learnings": []
+  }
+}

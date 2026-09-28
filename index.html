@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>WorkLog</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <aside class="sidebar">
+      <button class="brand" data-view="week" aria-label="WorkLog home">
+        <span class="brand-mark">W</span><span>WorkLog</span>
+      </button>
+      <nav class="nav" aria-label="Primary">
+        <button class="nav-item" data-view="today"><span class="nav-icon">◉</span><span>Today</span></button>
+        <button class="nav-item active" data-view="week"><span class="nav-icon">▣</span><span>This Week</span></button>
+        <button class="nav-item" data-view="month"><span class="nav-icon">□</span><span>This Month</span></button>
+        <button class="nav-item" data-view="search"><span class="nav-icon">⌕</span><span>Search</span></button>
+        <div class="nav-separator"></div>
+        <button class="nav-item" data-view="people"><span class="nav-icon">♙</span><span>People</span></button>
+        <button class="nav-item" data-view="topics"><span class="nav-icon">◇</span><span>Topics</span></button>
+        <button class="nav-item" data-view="analytics"><span class="nav-icon">▥</span><span>Analytics</span></button>
+      </nav>
+      <div class="sidebar-footer">
+        <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span><span>Settings</span></button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <div class="eyebrow" id="eyebrow"></div>
+          <h1 id="page-title">This Week</h1>
+          <p id="page-subtitle"></p>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-btn" id="previous-btn" title="Previous period" aria-label="Previous period">‹</button>
+          <button class="icon-btn" id="next-btn" title="Next period" aria-label="Next period">›</button>
+          <button class="secondary-btn" id="today-btn">Today</button>
+          <button class="primary-btn" id="add-btn"><span>＋</span> Add</button>
+        </div>
+      </header>
+      <section id="notice-area"></section>
+      <section id="content" class="content"></section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
