@@ -6,18 +6,25 @@ WorkLog captures the things task systems are bad at preserving: meeting context,
 
 ## Core storage model
 
-The data is the product. There is no backend and no database.
+The data is the product. There is no backend, account, cloud service, or database.
 
-WorkLog asks you to select a local folder and then writes **one human-readable JSON file per ISO week**:
+WorkLog asks you to select a local folder and writes **one human-readable JSON file per ISO week**:
 
 ```text
 worklog-data/
   2026/
     2026-W40.json
     2026-W41.json
-  2027/
-    2027-W01.json
+  backups/
+    2026/
+      2026-W40.json
+      2026-W41.json
+  recovery/
+    2026/
+      2026-W40-2026-09-28T....corrupt.json
 ```
+
+`backups/` is maintained automatically as a last-known-good recovery copy. `recovery/` is only used when WorkLog encounters damaged bytes and preserves them before repairing/restoring a canonical weekly file.
 
 The schema is versioned and documented in [`schema/week.schema.json`](schema/week.schema.json).
 
@@ -30,25 +37,33 @@ The schema is versioned and documented in [`schema/week.schema.json`](schema/wee
 - Achievement — accomplishment, impact, evidence
 - Quick note — anything worth remembering
 
-## Run locally
+## Use WorkLog
 
-Requirements: Node.js 18+ and a Chromium-based desktop browser (Microsoft Edge or Google Chrome).
+The normal end-user artifact is [`WorkLog.html`](WorkLog.html). It is a single self-contained file with the app's HTML, CSS and JavaScript embedded.
+
+1. Download or copy `WorkLog.html` anywhere on your Windows PC.
+2. Double-click it and open it in Microsoft Edge or Google Chrome.
+3. Click **Connect folder** and choose the folder where your weekly JSON files should live.
+
+No Node.js process or local web server is required for normal use. The browser still requires an explicit user gesture and permission before WorkLog can read or write the selected folder.
+
+### Development
+
+The repository keeps modular source files for maintainability. To run those directly during development:
 
 ```bash
 npm run dev
 ```
 
-Then open:
+Then open `http://localhost:4173`.
 
-```text
-http://localhost:4173
+To regenerate the standalone artifact from the modular source:
+
+```bash
+npm run build:standalone
 ```
 
-There are no npm dependencies and no build step.
-
-### Why localhost?
-
-Direct local file access uses the browser's File System Access API, which requires a secure context. `localhost` qualifies; opening `index.html` directly from `file://` is not reliable.
+There are no npm dependencies.
 
 ## First run
 
@@ -57,16 +72,43 @@ Direct local file access uses the browser's File System Access API, which requir
 3. Add an entry.
 4. WorkLog creates the correct year directory and weekly JSON file automatically.
 
-The selected directory handle is remembered in IndexedDB. The underlying journal data is never stored in IndexedDB and never sent over the network.
+The selected directory handle is remembered in IndexedDB. The journal itself remains ordinary files in the folder you selected and is never sent over the network.
+
+## Production safeguards
+
+WorkLog v1 deliberately keeps the architecture small while protecting the journal data:
+
+- strict runtime validation before data is trusted or written
+- schema-version migrations for older files
+- read-after-write verification
+- automatic last-known-good recovery files
+- self-recovery if a canonical weekly file becomes corrupt
+- preservation of damaged bytes under `recovery/` before repair
+- normal edits refuse to overwrite an already-invalid canonical file
+- full backup export **and** full backup restore
+- complete validation of imports/restores before the first file is changed
+- automated tests for week boundaries, migrations, backup/restore and corruption recovery
+
+Run the test suite with:
+
+```bash
+npm test
+```
+
+The same suite runs in GitHub Actions on pushes and pull requests.
 
 ## Data portability
 
-Because weekly JSON files are canonical, migration does not depend on WorkLog existing. The app also provides:
+Because weekly JSON files are canonical, migration does not depend on WorkLog existing. The app supports:
 
-- import of weekly JSON files
-- a combined backup export
+- import of individual weekly JSON files
+- one-file full backup export
+- one-file full backup restore
 - an explicit `schemaVersion`
-- a JSON Schema for validation/tooling
+- automatic schema migrations
+- a JSON Schema for external validation/tooling
+
+The original MVP backup shape (`{ schemaVersion, exportedAt, weeks }`) remains restorable by v1.0.
 
 ## Example data
 
