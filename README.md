@@ -21,7 +21,7 @@ worklog-data/
       2026-W41.json
   recovery/
     2026/
-      2026-W40-2026-09-28T....corrupt.json
+      2026-W40-2026-09-28T....json
 ```
 
 `backups/` is maintained automatically as a last-known-good recovery copy. `recovery/` is only used when WorkLog encounters damaged bytes and preserves them before repairing/restoring a canonical weekly file.
@@ -49,7 +49,7 @@ No Node.js process or local web server is required for normal use. The browser s
 
 ### Development
 
-The repository keeps modular source files for maintainability. To run those directly during development:
+Development requires Node.js 20 or newer. The repository keeps modular source files for maintainability. To run those directly during development:
 
 ```bash
 npm run dev
@@ -63,7 +63,7 @@ To regenerate the standalone artifact from the modular source:
 npm run build:standalone
 ```
 
-There are no npm dependencies.
+There are no runtime dependencies. Playwright is a development-only dependency for browser tests.
 
 ## First run
 
@@ -123,3 +123,28 @@ Direct folder read/write depends on the File System Access API. The intended env
 Jira answers: **What work item exists and what is its status?**
 
 WorkLog answers: **What happened, what did I contribute, what was decided, why, and what changed?**
+
+
+## Hardening and recovery
+
+- Moves save the destination before removing the original. A failed cleanup may leave a duplicate, which is reported; it does not intentionally delete the only copy.
+- Imports require confirmation before replacing existing weeks. Every replaced valid file is retained in `history/YYYY/`; damaged bytes are retained in `recovery/YYYY/`. Import a retained JSON file through Settings to restore it.
+- History is intentionally not pruned automatically. It can grow over time; copy it somewhere safe before manually removing old versions.
+- Full export and aggregate views report unreadable weeks rather than silently excluding them. Settings remains available for repair/import.
+- Writes are serialized across cooperating tabs on the same browser origin, and stale entry/reflection edits are rejected. External programs and copies opened from different origins do not share that lock; avoid editing the same folder simultaneously from those contexts.
+- Multi-week imports are not a filesystem transaction: if the disk fails midway, the app reports how many weeks completed and preserves overwritten versions. Keep an independent full backup before large restores.
+- A failed refresh of the recovery copy after a verified canonical save is reported as a warning, rather than treating the saved entry as unsaved.
+
+## Browser regression tests
+
+```bash
+npm ci
+npx playwright install chromium
+npm test
+npm run build:standalone
+npm run test:browser
+```
+
+The browser suite clicks the actual standalone HTML UI, writes real temporary JSON files, tests failures and confirmation dialogs, and captures screenshots in `test-results/`. The native directory picker is substituted for automation; a separate hosted check uses real browser File System Access handles. No production journal data is used. The Windows Edge/Chrome folder chooser and OS permission prompts still require a manual smoke test.
+
+Weekly reflections can be edited below the week view. Their highlights appear in the monthly view.

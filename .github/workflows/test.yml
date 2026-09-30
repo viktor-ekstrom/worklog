@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -16,18 +16,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+      - run: npm ci
       - run: npm test
       - run: npm run build:standalone
-      - name: Verify standalone artifact on pull requests
-        if: github.event_name == 'pull_request'
+      - name: Verify committed standalone artifact
         run: git diff --exit-code -- WorkLog.html
-      - name: Refresh standalone artifact on main
-        if: github.event_name == 'push'
-        run: |
-          if ! git diff --quiet -- WorkLog.html; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add WorkLog.html
-            git commit -m "Build standalone WorkLog artifact [skip ci]"
-            git push
-          fi
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-test-results
+          path: test-results/

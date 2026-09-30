@@ -5,7 +5,7 @@ import {
 } from './utils.js';
 import {
   chooseDirectory, downloadBackup, ensurePermission, forgetDirectory, getRememberedDirectory,
-  importWeekFiles, readAllWeeks, readWeek, supportsFileSystemAccess, writeWeek
+  inspectImportFiles, getImportConflicts, applyImport, readAllWeeks, readWeek, supportsFileSystemAccess, saveEntry, removeEntry, saveReflection
 } from './storage.js';
 
 const state = {
@@ -56,8 +56,25 @@ function toast(message, error = false) {
   setTimeout(() => node.remove(), 3200);
 }
 
+let modalDirty = false;
+let modalBusy = false;
+let modalFocus = null;
 function setModal(html) {
+  modalFocus = document.activeElement;
+  modalDirty = false;
   els.modal.innerHTML = html;
+  const dialog = els.modal.querySelector('.modal');
+  dialog?.setAttribute('role', 'dialog');
+  dialog?.setAttribute('aria-modal', 'true');
+  dialog?.setAttribute('aria-label', dialog.querySelector('h2')?.textContent || 'Entry');
+  els.modal.querySelectorAll('.field').forEach((field, i) => {
+    const input = field.querySelector('input, textarea, select');
+    const label = field.querySelector('label');
+    if (input && label) { input.id ||= `modal-field-${i}`; label.htmlFor = input.id; }
+  });
+  els.modal.querySelectorAll('.close-btn').forEach(button => button.setAttribute('aria-label', 'Close'));
+  els.modal.querySelector('form')?.addEventListener('input', () => { modalDirty = true; });
+  els.modal.querySelector('input, textarea, button')?.focus();
   const backdrop = els.modal.querySelector('.modal-backdrop');
   backdrop?.addEventListener('mousedown', event => {
     if (event.target === backdrop) closeModal();
@@ -65,14 +82,22 @@ function setModal(html) {
   els.modal.querySelectorAll('[data-close-modal]').forEach(btn => btn.addEventListener('click', closeModal));
 }
 
-function closeModal() { els.modal.innerHTML = ''; }
+function closeModal(force = false) {
+  if (modalBusy) return;
+  if (force !== true && modalDirty && !confirm('Discard unsaved changes?')) return;
+  els.modal.innerHTML = ''; modalDirty = false; modalFocus?.focus();
+}
+window.addEventListener('beforeunload', event => { if (modalDirty || modalBusy) { event.preventDefault(); event.returnValue = ''; } });
 
 async function initialize() {
   bindGlobalEvents();
-  state.directory = await getRememberedDirectory();
-  if (state.directory) state.connected = await ensurePermission(state.directory, false);
+  try {
+    state.directory = await getRememberedDirectory();
+    if (state.directory) state.connected = await ensurePermission(state.directory, false);
+  } catch (error) { state.readError = error.message; }
   await refreshData(false);
 }
+window.addEventListener('worklog-storage-warning', event => { state.storageWarning = event.detail; toast(event.detail, true); });
 
 function bindGlobalEvents() {
   document.querySelectorAll('[data-view]').forEach(button => button.addEventListener('click', async () => {
@@ -97,16 +122,23 @@ function bindGlobalEvents() {
   els.add.addEventListener('click', () => openEntryTypeModal());
 
   document.addEventListener('keydown', event => {
-    if ((event.key === 'n' || event.key === 'N') && !event.metaKey && !event.ctrlKey && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
+    if (!els.modal.innerHTML && (event.key === 'n' || event.key === 'N') && !event.metaKey && !event.ctrlKey && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
       event.preventDefault();
       openEntryTypeModal();
+    }
+    if (event.key === 'Tab' && els.modal.innerHTML) {
+      const focusable = [...els.modal.querySelectorAll('button, input, textarea, select, a[href]')].filter(el => !el.disabled);
+      const first = focusable[0], last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
     if (event.key === 'Escape' && els.modal.innerHTML) closeModal();
   });
 }
 
 function navigateCursor(direction) {
-  if (['week', 'today'].includes(state.view)) return addDays(state.cursor, 7 * direction);
+  if (state.view === 'today') return addDays(state.cursor, direction);
+  if (state.view === 'week') return addDays(state.cursor, 7 * direction);
   if (state.view === 'month') return addMonths(state.cursor, direction);
   if (state.view === 'analytics') {
     const d = new Date(state.cursor);
@@ -141,6 +173,7 @@ async function refreshData(forceAll = false) {
   try {
     if (state.directory && !state.connected) state.connected = await ensurePermission(state.directory, false);
     if (state.connected) {
+      state.readError = '';
       state.currentWeek = await readWeek(state.directory, state.cursor);
       if (forceAll || ['search','people','topics','analytics','month','settings'].includes(state.view)) {
         state.allWeeks = await readAllWeeks(state.directory);
@@ -151,8 +184,11 @@ async function refreshData(forceAll = false) {
     }
   } catch (error) {
     console.error(error);
-    state.connected = false;
-    toast('Could not read the worklog folder. Reconnect it in Settings.', true);
+    if (error.name === 'NotAllowedError') state.connected = false;
+    state.allWeeks = [];
+    state.currentWeek = createEmptyWeek(state.cursor);
+    state.readError = error.message;
+    toast(error.message, true);
   }
   render();
 }
@@ -177,13 +213,22 @@ function render() {
     today: renderToday, week: renderWeek, month: renderMonth, search: renderSearch,
     people: renderPeople, topics: renderTopics, analytics: renderAnalytics, settings: renderSettings
   };
+  els.content.dataset.view = state.view;
   els.content.innerHTML = renderers[state.view]?.() || renderWeek();
   bindRenderedEvents();
 }
 
 function renderNotice() {
-  if (state.connected) {
+  if (state.storageWarning && !state.readError) {
+    els.notice.innerHTML = `<div class="notice" role="alert">${escapeHTML(state.storageWarning)}</div>`;
+    return;
+  }
+  if (state.connected && !state.readError) {
     els.notice.innerHTML = '';
+    return;
+  }
+  if (state.connected && state.readError) {
+    els.notice.innerHTML = `<div class="notice" role="alert">${escapeHTML(state.readError)} Use Settings to restore a valid backup, or repair the file in your folder.</div>`;
     return;
   }
   const supportedText = supportsFileSystemAccess
@@ -191,7 +236,7 @@ function renderNotice() {
     : 'Direct folder access requires Microsoft Edge or Google Chrome on desktop.';
   const action = state.directory ? 'Allow access' : 'Connect folder';
   els.notice.innerHTML = `<div class="notice">
-    <div><strong>${state.directory ? `Reconnect ${escapeHTML(state.directory.name)}` : 'No worklog folder connected'}</strong><div class="notice-copy">${supportedText}</div></div>
+    <div>${state.readError ? `<p role="alert">${escapeHTML(state.readError)}</p>` : ''}<strong>${state.directory ? `Reconnect ${escapeHTML(state.directory.name)}` : 'No worklog folder connected'}</strong><div class="notice-copy">${supportedText}</div></div>
     <button class="primary-btn" id="notice-connect" ${supportsFileSystemAccess ? '' : 'disabled'}>${action}</button>
   </div>`;
   document.querySelector('#notice-connect')?.addEventListener('click', state.directory ? requestExistingPermission : connectFolder);
@@ -229,7 +274,7 @@ function renderWeek() {
       <div class="day-label"><div class="day-name">${formatDate(day, { weekday: 'short' })}</div><div class="day-date">${formatDate(day, { day: 'numeric', month: 'short' })}</div></div>
       <div class="day-entries">${dayEntries.length ? dayEntries.map(renderEntryRow).join('') : '<div class="day-empty">No entries</div>'}</div>
     </section>`;
-  }).join('')}</div>`;
+  }).join('')}</div><div class="panel" style="margin-top:20px"><div class="setting-row"><div><h2>Weekly reflection</h2><p>Highlights, outcomes, challenges and learnings</p></div><button class="secondary-btn" id="edit-reflection">Edit reflection</button></div>${Object.entries(week.weeklyReflection).map(([key, items]) => detailSection(key[0].toUpperCase() + key.slice(1), items)).join('')}</div>`;
 }
 
 function renderEntryRow(entry) {
@@ -338,13 +383,13 @@ function renderSettings() {
   const selectedTheme = localStorage.getItem('worklog-theme') || 'system';
   return `<div class="settings-grid"><div class="panel"><h2>Local storage</h2><p>The weekly JSON files in your chosen folder are the source of truth.</p>
     <div class="setting-row"><div><div class="setting-title">Worklog folder</div><div class="setting-copy">${state.directory ? escapeHTML(state.directory.name) : 'No folder selected'}</div></div><div class="button-row"><button class="secondary-btn" id="settings-connect">${state.directory ? 'Change folder' : 'Connect folder'}</button>${state.directory ? '<button class="ghost-btn" id="settings-forget">Forget</button>' : ''}</div></div>
-    <div class="setting-row"><div><div class="setting-title">Import weekly JSON</div><div class="setting-copy">Import one or more YYYY-Www.json files into the selected folder.</div></div><button class="secondary-btn" id="settings-import" ${state.connected ? '' : 'disabled'}>Import</button></div>
+    <div class="setting-row"><div><div class="setting-title">Import / restore JSON</div><div class="setting-copy">Import weekly files or a full backup. Replacements require confirmation; previous versions are retained in history/.</div></div><button class="secondary-btn" id="settings-import" ${state.connected ? '' : 'disabled'}>Import</button></div>
     <div class="setting-row"><div><div class="setting-title">Full backup</div><div class="setting-copy">Download all weekly files as one portable JSON backup.</div></div><button class="secondary-btn" id="settings-backup" ${state.connected ? '' : 'disabled'}>Export backup</button></div>
   </div><div class="panel"><h2>Appearance</h2><p>Choose how WorkLog looks on this browser.</p><div class="field"><label>Theme</label><select id="theme-select"><option value="system" ${selectedTheme==='system'?'selected':''}>System</option><option value="light" ${selectedTheme==='light'?'selected':''}>Light</option><option value="dark" ${selectedTheme==='dark'?'selected':''}>Dark</option></select></div><div class="setting-row"><div><div class="setting-title">Data model</div><div class="setting-copy">Schema version 1 · one JSON file per ISO week</div></div></div><div class="setting-row"><div><div class="setting-title">Keyboard shortcut</div><div class="setting-copy">Press N anywhere outside a form to add an entry.</div></div></div></div></div>`;
 }
 
 function getAllKnownEntries() {
-  const source = state.allWeeks.length ? state.allWeeks : [state.currentWeek];
+  const source = [...state.allWeeks.filter(week => week.week !== state.currentWeek.week), state.currentWeek];
   return sortEntries(source.flatMap(week => week.entries || []));
 }
 
@@ -363,10 +408,14 @@ function bindRenderedEvents() {
   document.querySelectorAll('[data-search-person]').forEach(btn => btn.addEventListener('click', () => { state.search = btn.dataset.searchPerson; state.view='search'; render(); }));
   document.querySelectorAll('[data-search-topic]').forEach(btn => btn.addEventListener('click', () => { state.search = btn.dataset.searchTopic; state.view='search'; render(); }));
 
+  document.querySelector('#edit-reflection')?.addEventListener('click', openReflectionForm);
   document.querySelector('#settings-connect')?.addEventListener('click', connectFolder);
   document.querySelector('#settings-forget')?.addEventListener('click', async () => { await forgetDirectory(); state.directory=null; state.connected=false; state.allWeeks=[]; render(); });
   document.querySelector('#settings-import')?.addEventListener('click', importFiles);
-  document.querySelector('#settings-backup')?.addEventListener('click', async () => { const weeks = await readAllWeeks(state.directory); downloadBackup(weeks); });
+  document.querySelector('#settings-backup')?.addEventListener('click', async () => {
+    try { downloadBackup(await readAllWeeks(state.directory)); toast('Backup exported.'); }
+    catch (error) { state.readError = error.message; toast(error.message, true); els.notice.innerHTML = `<div class="notice" role="alert">${escapeHTML(error.message)}</div>`; }
+  });
   document.querySelector('#theme-select')?.addEventListener('change', event => { localStorage.setItem('worklog-theme', event.target.value); applyTheme(event.target.value); });
 }
 
@@ -385,7 +434,10 @@ async function importFiles() {
   input.addEventListener('change', async () => {
     try {
       if (!input.files?.length) return;
-      const imported = await importWeekFiles(state.directory, [...input.files]);
+      const plan = await inspectImportFiles([...input.files]);
+      const conflicts = await getImportConflicts(state.directory, plan);
+      if (conflicts.length && !confirm(`Replace ${conflicts.length} existing week(s): ${conflicts.join(', ')}? This replaces their entries and reflections. Previous versions will be preserved in history/ or recovery/.`)) return;
+      const imported = await applyImport(state.directory, plan, { overwrite: conflicts.length > 0 });
       toast(`Imported ${imported.length} weekly file${imported.length===1?'':'s'}.`);
       await refreshData(true);
     } catch (error) { toast(error.message, true); }
@@ -436,6 +488,10 @@ function referenceFromValue(value) {
 
 async function saveEntryForm(event, type, existing) {
   event.preventDefault();
+  if (modalBusy) return;
+  modalBusy = true;
+  const submit = event.currentTarget.querySelector('[type=submit]');
+  submit.disabled = true;
   try {
     const fd = new FormData(event.currentTarget);
     const entry = {
@@ -451,41 +507,47 @@ async function saveEntryForm(event, type, existing) {
     const listFields = ['discussion','contribution','decisions','details','notes'];
     listFields.forEach(key => { if (fd.has(key)) entry[key] = splitLines(fd.get(key)); });
     ['summary','outcome','decision','context','rationale','impact','content'].forEach(key => { if (fd.has(key)) entry[key] = String(fd.get(key) || '').trim(); });
-    if (fd.has('followUps')) entry.followUps = splitLines(fd.get('followUps')).map(line => { const [text, reference] = line.split('|').map(v=>v.trim()); return { text, ...(reference ? { reference } : {}) }; });
+    if (fd.has('followUps')) entry.followUps = splitLines(fd.get('followUps')).map(line => { const [text, reference] = line.split('|').map(v=>v.trim()); const previous = existing?.followUps?.find(item => item.text === text && (item.reference || '') === (reference || '')); return { ...(previous || {}), text, ...(reference ? { reference } : {}) }; });
     if (fd.has('references')) entry.references = splitLines(fd.get('references')).map(referenceFromValue).filter(Boolean);
     if (!entry.title) throw new Error('Title is required.');
 
     const targetDate = parseLocalDate(entry.date);
-    const targetWeek = await readWeek(state.directory, targetDate);
-    if (existing) {
-      const oldWeekInfo = getISOWeekInfo(parseLocalDate(existing.date));
-      const newWeekInfo = getISOWeekInfo(targetDate);
-      if (oldWeekInfo.key !== newWeekInfo.key) {
-        const oldWeek = await readWeek(state.directory, parseLocalDate(existing.date));
-        oldWeek.entries = oldWeek.entries.filter(item => item.id !== existing.id);
-        await writeWeek(state.directory, oldWeek);
-      } else {
-        targetWeek.entries = targetWeek.entries.filter(item => item.id !== existing.id);
-      }
-    }
-    targetWeek.entries.push(entry);
-    targetWeek.entries = sortEntries(targetWeek.entries);
-    await writeWeek(state.directory, targetWeek);
-    closeModal();
+    await saveEntry(state.directory, entry, existing);
+    modalBusy = false;
+    closeModal(true);
     state.cursor = targetDate;
     toast(existing ? 'Entry updated.' : 'Entry saved.');
     await refreshData(true);
   } catch (error) { toast(error.message || 'Could not save entry.', true); }
+  finally { modalBusy = false; submit.disabled = false; }
 }
 
 async function deleteEntry(entry) {
-  if (!entry || !confirm(`Delete “${entry.title}”?`)) return;
+  if (modalBusy || !entry || !confirm(`Delete “${entry.title}”?`)) return;
   try {
-    const week = await readWeek(state.directory, parseLocalDate(entry.date));
-    week.entries = week.entries.filter(item => item.id !== entry.id);
-    await writeWeek(state.directory, week);
-    closeModal(); toast('Entry deleted.'); await refreshData(true);
+    await removeEntry(state.directory, entry);
+    closeModal(true); toast('Entry deleted.'); await refreshData(true);
   } catch (error) { toast(error.message, true); }
+}
+
+function openReflectionForm() {
+  const date = new Date(state.cursor);
+  const previous = structuredClone(state.currentWeek.weeklyReflection);
+  setModal(`<div class="modal-backdrop"><div class="modal"><form id="reflection-form"><div class="modal-header"><h2>Weekly reflection · ${escapeHTML(state.currentWeek.week)}</h2><button type="button" class="close-btn" data-close-modal>×</button></div><div class="modal-body"><div class="form-grid">${Object.entries(previous).map(([key, items]) => `<div class="field span-2"><label>${key[0].toUpperCase() + key.slice(1)}</label><textarea name="${key}">${escapeHTML(joinLines(items))}</textarea><div class="field-help">One item per line</div></div>`).join('')}</div></div><div class="modal-footer"><span></span><button type="submit" class="primary-btn">Save reflection</button></div></form></div></div>`);
+  document.querySelector('#reflection-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (modalBusy) return;
+    modalBusy = true;
+    const button = event.currentTarget.querySelector('[type=submit]');
+    button.disabled = true;
+    const data = new FormData(event.currentTarget);
+    try {
+      const reflection = Object.fromEntries(Object.keys(previous).map(key => [key, splitLines(data.get(key))]));
+      await saveReflection(state.directory, date, reflection, previous);
+      modalBusy = false; closeModal(true); toast('Reflection saved.'); await refreshData(true);
+    } catch (error) { toast(error.message, true); }
+    finally { modalBusy = false; button.disabled = false; }
+  });
 }
 
 function detailSection(title, content) {

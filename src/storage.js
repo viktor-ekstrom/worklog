@@ -57,7 +57,7 @@ export async function getRememberedDirectory() {
 export async function chooseDirectory() {
   if (!supportsFileSystemAccess) throw new Error('Direct folder access is not supported in this browser. Use Microsoft Edge or Google Chrome on desktop.');
   const handle = await window.showDirectoryPicker({ mode: 'readwrite', id: 'worklog-data' });
-  await idbSet(KEY, handle);
+  try { await idbSet(KEY, handle); } catch (error) { console.warn('Folder connected, but could not remember it for next time.', error); }
   return handle;
 }
 
@@ -118,22 +118,25 @@ async function getBackupHandle(root, weekKey, create = false) {
   return dir.getFileHandle(`${weekKey}.json`, { create });
 }
 
-async function saveRecoveryCopy(root, weekKey, rawText) {
-  try {
-    const year = Number(weekKey.slice(0, 4));
-    const dir = await getNestedYearDirectory(root, RECOVERY_DIR, year, true);
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const handle = await dir.getFileHandle(`${weekKey}-${stamp}.corrupt.json`, { create: true });
-    await writeText(handle, rawText);
-  } catch (error) {
-    console.warn('Could not preserve corrupt file in recovery folder.', error);
-  }
+async function saveRecoveryCopy(root, weekKey, rawText, parent = RECOVERY_DIR) {
+  const year = Number(weekKey.slice(0, 4));
+  const dir = await getNestedYearDirectory(root, parent, year, true);
+  const stamp = `${new Date().toISOString().replace(/[:.]/g, '-')}-${globalThis.crypto?.randomUUID?.() || Math.random().toString(16).slice(2)}`;
+  const handle = await dir.getFileHandle(`${weekKey}-${stamp}.json`, { create: true });
+  await writeText(handle, rawText);
+  if (await readText(handle) !== rawText) throw new Error('Recovery copy failed verification. Original file was not replaced.');
+}
+
+function verifyWeekKey(week, key) {
+  if (week.week !== key) throw new Error(`File ${key}.json contains ${week.week}. Rename or repair the file before continuing.`);
+  return week;
 }
 
 async function recoverFromBackup(root, weekKey, corruptText) {
   try {
     const backupHandle = await getBackupHandle(root, weekKey, false);
     const { week } = await readValidatedHandle(backupHandle, `Recovery copy for ${weekKey}`);
+    verifyWeekKey(week, weekKey);
     await saveRecoveryCopy(root, weekKey, corruptText);
     const yearDir = await getYearDirectory(root, Number(weekKey.slice(0, 4)), true);
     await writeJSONFile(yearDir, `${weekKey}.json`, week);
@@ -144,14 +147,15 @@ async function recoverFromBackup(root, weekKey, corruptText) {
 }
 
 async function readWeekHandleWithRecovery(root, weekKey, fileHandle) {
-  let rawText = '';
+  const rawText = await readText(fileHandle);
   try {
-    rawText = await readText(fileHandle);
     let parsed;
     try { parsed = JSON.parse(rawText); }
     catch (error) { throw new Error(`Invalid JSON: ${error.message}`); }
-    return normalizeWeek(parsed, weekKey);
+    if (Number(parsed?.schemaVersion) > 1) throw new Error('This file requires a newer WorkLog version.');
+    return verifyWeekKey(normalizeWeek(parsed, weekKey), weekKey);
   } catch (error) {
+    if (error?.name === 'NotAllowedError' || /newer WorkLog|Rename or repair/.test(error.message)) throw error;
     const recovered = await recoverFromBackup(root, weekKey, rawText);
     if (recovered) {
       console.warn(`${weekKey} was invalid and has been restored from its last known-good recovery copy.`);
@@ -179,10 +183,14 @@ export async function writeWeek(root, inputWeek, { allowRepair = false } = {}) {
   const yearDir = await getYearDirectory(root, year, true);
   const filename = `${week.week}.json`;
 
+  let hadExisting = false;
   // Preserve the currently valid canonical file before replacing it.
   try {
     const existingHandle = await yearDir.getFileHandle(filename, { create: false });
-    const { week: existing } = await readValidatedHandle(existingHandle, `Existing ${filename}`);
+    hadExisting = true;
+    const { week: existing, text } = await readValidatedHandle(existingHandle, `Existing ${filename}`);
+    verifyWeekKey(existing, week.week);
+    await saveRecoveryCopy(root, week.week, text, 'history');
     const backupDir = await getNestedYearDirectory(root, BACKUP_DIR, year, true);
     await writeJSONFile(backupDir, filename, existing);
   } catch (error) {
@@ -192,18 +200,29 @@ export async function writeWeek(root, inputWeek, { allowRepair = false } = {}) {
         throw new Error(`Refusing to overwrite ${filename} because the existing file is not valid. ${error.message}`);
       }
       // An explicit import/restore may repair it, but preserve the damaged bytes first.
-      try {
-        const damagedHandle = await yearDir.getFileHandle(filename, { create: false });
-        await saveRecoveryCopy(root, week.week, await readText(damagedHandle));
-      } catch {}
+      const damagedHandle = await yearDir.getFileHandle(filename, { create: false });
+      await saveRecoveryCopy(root, week.week, await readText(damagedHandle));
     }
   }
 
-  const canonicalHandle = await writeJSONFile(yearDir, filename, week);
+  let canonicalHandle;
+  try {
+    canonicalHandle = await writeJSONFile(yearDir, filename, week);
+  } catch (error) {
+    // getFileHandle(create:true) can leave an empty file when the first write fails.
+    if (!hadExisting) {
+      try {
+        const created = await yearDir.getFileHandle(filename);
+        if ((await readText(created)) === '') await yearDir.removeEntry(filename);
+      } catch {}
+    }
+    throw error;
+  }
 
   // Read-after-write verification. If this fails, put the previous backup back.
   try {
-    await readValidatedHandle(canonicalHandle, `Saved ${filename}`);
+    const saved = await readValidatedHandle(canonicalHandle, `Saved ${filename}`);
+    if (JSON.stringify(saved.week) !== JSON.stringify(week)) throw new Error('Saved content does not match the requested data.');
   } catch (error) {
     const recovered = await recoverFromBackup(root, week.week, await readText(canonicalHandle));
     throw new Error(recovered
@@ -212,25 +231,35 @@ export async function writeWeek(root, inputWeek, { allowRepair = false } = {}) {
   }
 
   // Keep a last-known-good copy even after the first successful save.
-  const backupDir = await getNestedYearDirectory(root, BACKUP_DIR, year, true);
-  await writeJSONFile(backupDir, filename, week);
+  try {
+    const backupDir = await getNestedYearDirectory(root, BACKUP_DIR, year, true);
+    await writeJSONFile(backupDir, filename, week);
+  } catch (error) {
+    // The canonical save succeeded. Do not invite a retry that could duplicate an entry.
+    const message = `${filename} was saved, but its recovery copy could not be refreshed. Export a backup when possible. ${error.message}`;
+    console.warn(message);
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('worklog-storage-warning', { detail: message }));
+  }
   return week;
 }
 
 export async function readAllWeeks(root) {
   const weeks = [];
+  const failures = [];
   for await (const [yearName, yearHandle] of root.entries()) {
     if (yearHandle.kind !== 'directory' || !/^\d{4}$/.test(yearName)) continue;
     for await (const [name, handle] of yearHandle.entries()) {
       if (handle.kind !== 'file' || !/^\d{4}-W\d{2}\.json$/.test(name)) continue;
       const weekKey = name.slice(0, -5);
       try {
+        if (weekKey.slice(0, 4) !== yearName) throw new Error(`${name} is in the wrong year folder.`);
         weeks.push(await readWeekHandleWithRecovery(root, weekKey, handle));
       } catch (error) {
-        console.error(error);
+        failures.push(error.message);
       }
     }
   }
+  if (failures.length) throw new Error(`Some weekly files could not be read. No complete backup or overview can be produced. ${failures.join(' ')}`);
   return weeks.sort((a, b) => a.week.localeCompare(b.week));
 }
 
@@ -240,19 +269,96 @@ export async function inspectImportFiles(files) {
   return mergeImportDocuments(documents);
 }
 
-export async function applyImport(root, plan) {
-  // The plan has already been completely parsed and validated before any write starts.
-  const imported = [];
+// Serializes cooperating tabs; version checks also reject stale entry edits.
+export async function withWriteLock(action) {
+  if (globalThis.navigator?.locks) return navigator.locks.request('worklog-writes', action);
+  const previous = pendingWrite;
+  let release;
+  pendingWrite = new Promise(resolve => { release = resolve; });
+  await previous;
+  try { return await action(); } finally { release(); }
+}
+let pendingWrite = Promise.resolve();
+
+export async function getImportConflicts(root, plan) {
+  const conflicts = [];
   for (const week of plan.weeks) {
-    await writeWeek(root, week, { allowRepair: true });
-    imported.push(week.week);
+    try {
+      const dir = await getYearDirectory(root, Number(week.week.slice(0, 4)));
+      await dir.getFileHandle(`${week.week}.json`);
+      conflicts.push(week.week);
+    } catch (error) { if (error.name !== 'NotFoundError') throw error; }
   }
-  return imported;
+  return conflicts;
 }
 
-export async function importWeekFiles(root, files) {
-  const plan = await inspectImportFiles(files);
-  return applyImport(root, plan);
+export async function applyImport(root, plan, { overwrite = false } = {}) {
+  return withWriteLock(async () => {
+    const validated = mergeImportDocuments([{ kind: plan.kind, weeks: plan.weeks.map(week => normalizeWeek(week)) }]);
+    const conflicts = await getImportConflicts(root, validated);
+    if (conflicts.length && !overwrite) throw new Error(`Import would replace existing weeks: ${conflicts.join(', ')}. Confirm replacement first.`);
+    const imported = [];
+    try {
+      for (const week of validated.weeks) {
+        await writeWeek(root, week, { allowRepair: true });
+        imported.push(week.week);
+      }
+    } catch (error) {
+      throw new Error(`Import stopped. ${imported.length} of ${validated.weeks.length} weeks completed. Previous files are preserved under history/ or recovery/. ${error.message}`);
+    }
+    return imported;
+  });
+}
+
+export async function importWeekFiles(root, files, options) {
+  return applyImport(root, await inspectImportFiles(files), options);
+}
+
+function assertUnchanged(actual, expected) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error('This entry changed in another tab or file. Close the editor, refresh, and try again.');
+}
+
+export async function saveEntry(root, entry, existing = null) {
+  return withWriteLock(async () => {
+    const targetDate = parseLocalDate(entry.date);
+    const target = await readWeek(root, targetDate);
+    let source;
+    if (existing) {
+      source = target.week === getISOWeekInfo(parseLocalDate(existing.date)).key ? target : await readWeek(root, parseLocalDate(existing.date));
+      assertUnchanged(source.entries.find(item => item.id === existing.id), existing);
+    }
+    const collision = target.entries.find(item => item.id === entry.id);
+    if (collision && source !== target) throw new Error('An entry with this ID already exists in the destination week. Review it before retrying.');
+    target.entries = target.entries.filter(item => item.id !== entry.id);
+    target.entries.push(entry);
+    // Validate the entire destination before touching either file. Save destination first.
+    normalizeWeek(target);
+    await writeWeek(root, target);
+    if (source && source !== target) {
+      source.entries = source.entries.filter(item => item.id !== entry.id);
+      try { await writeWeek(root, source); }
+      catch (error) { throw new Error(`Entry saved in the destination week, but the original could not be removed. Check both weeks before retrying. ${error.message}`); }
+    }
+    return entry;
+  });
+}
+
+export async function removeEntry(root, entry) {
+  return withWriteLock(async () => {
+    const week = await readWeek(root, parseLocalDate(entry.date));
+    assertUnchanged(week.entries.find(item => item.id === entry.id), entry);
+    week.entries = week.entries.filter(item => item.id !== entry.id);
+    return writeWeek(root, week);
+  });
+}
+
+export async function saveReflection(root, date, reflection, previous) {
+  return withWriteLock(async () => {
+    const week = await readWeek(root, date);
+    if (JSON.stringify(week.weeklyReflection) !== JSON.stringify(previous)) throw new Error('Reflection changed elsewhere. Reopen it before saving.');
+    week.weeklyReflection = reflection;
+    return writeWeek(root, week);
+  });
 }
 
 export function downloadBackup(weeks) {

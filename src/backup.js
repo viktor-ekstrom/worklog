@@ -22,7 +22,6 @@ export function parseImportDocument(text, sourceName = 'JSON file') {
   if (parsed && Array.isArray(parsed.weeks)) {
     const version = parsed.backupFormatVersion ?? parsed.schemaVersion ?? 1;
     if (version !== BACKUP_FORMAT_VERSION) throw new Error(`${sourceName} uses unsupported backup format version ${version}.`);
-    if (!parsed.weeks.length) throw new Error(`${sourceName} contains no weekly files.`);
     return { kind: 'backup', weeks: parsed.weeks.map((week, index) => normalizeWeek(week, `${sourceName} week ${index + 1}`)) };
   }
 

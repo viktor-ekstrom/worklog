@@ -7,10 +7,14 @@
   "scripts": {
     "dev": "node server.mjs",
     "start": "node server.mjs",
-    "test": "node --test",
-    "build:standalone": "node scripts/build-standalone.mjs"
+    "test": "node --test test/*.test.js",
+    "build:standalone": "node scripts/build-standalone.mjs",
+    "test:browser": "node scripts/browser-test.mjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
   }
 }

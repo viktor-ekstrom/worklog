@@ -1,3 +1,6 @@
 .DS_Store
 Thumbs.db
 worklog-data/
+test-results/
+
+node_modules/

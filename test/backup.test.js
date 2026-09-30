@@ -22,3 +22,8 @@ test('duplicate weeks across selected imports are rejected before writing', () =
   const b = parseImportDocument(JSON.stringify(week), 'two.json');
   assert.throws(() => mergeImportDocuments([a, b]), /more than once/);
 });
+
+
+test('an empty full backup round-trips', () => {
+  assert.equal(parseImportDocument(JSON.stringify(createBackupPayload([]))).weeks.length, 0);
+});
