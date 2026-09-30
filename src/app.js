@@ -4,8 +4,8 @@ import {
   sortEntries, splitLines, startOfISOWeek, toLocalDateInput, uid
 } from './utils.js';
 import {
-  chooseDirectory, downloadBackup, ensurePermission, forgetDirectory, getRememberedDirectory,
-  inspectImportFiles, getImportConflicts, applyImport, readAllWeeks, readWeek, supportsFileSystemAccess, saveEntry, removeEntry, saveReflection
+  downloadBackup, ensurePermission, getRememberedDirectory,
+  inspectImportFiles, getImportConflicts, applyImport, readAllWeeks, readWeek, supportsLocalServer, saveEntry, removeEntry, saveReflection
 } from './storage.js';
 
 const state = {
@@ -148,27 +148,6 @@ function navigateCursor(direction) {
   return addDays(state.cursor, 7 * direction);
 }
 
-async function connectFolder() {
-  try {
-    state.directory = await chooseDirectory();
-    state.connected = await ensurePermission(state.directory, true);
-    if (state.connected) {
-      toast(`Connected to ${state.directory.name}`);
-      await refreshData(true);
-    }
-  } catch (error) {
-    if (error?.name !== 'AbortError') toast(error.message || 'Could not connect folder.', true);
-  }
-}
-
-async function requestExistingPermission() {
-  if (!state.directory) return connectFolder();
-  try {
-    state.connected = await ensurePermission(state.directory, true);
-    await refreshData(true);
-  } catch (error) { toast(error.message, true); }
-}
-
 async function refreshData(forceAll = false) {
   try {
     if (state.directory && !state.connected) state.connected = await ensurePermission(state.directory, false);
@@ -227,19 +206,15 @@ function renderNotice() {
     els.notice.innerHTML = '';
     return;
   }
+  if (supportsLocalServer) {
+    els.notice.innerHTML = `<div class="notice" role="alert"><div><strong>Local server storage unavailable</strong><div class="notice-copy">${escapeHTML(state.readError || 'Restart the WorkLog server and reload this page.')}</div></div></div>`;
+    return;
+  }
   if (state.connected && state.readError) {
     els.notice.innerHTML = `<div class="notice" role="alert">${escapeHTML(state.readError)} Use Settings to restore a valid backup, or repair the file in your folder.</div>`;
     return;
   }
-  const supportedText = supportsFileSystemAccess
-    ? 'Choose a local folder. WorkLog will read and write your weekly JSON files there.'
-    : 'Direct folder access requires Microsoft Edge or Google Chrome on desktop.';
-  const action = state.directory ? 'Allow access' : 'Connect folder';
-  els.notice.innerHTML = `<div class="notice">
-    <div>${state.readError ? `<p role="alert">${escapeHTML(state.readError)}</p>` : ''}<strong>${state.directory ? `Reconnect ${escapeHTML(state.directory.name)}` : 'No worklog folder connected'}</strong><div class="notice-copy">${supportedText}</div></div>
-    <button class="primary-btn" id="notice-connect" ${supportsFileSystemAccess ? '' : 'disabled'}>${action}</button>
-  </div>`;
-  document.querySelector('#notice-connect')?.addEventListener('click', state.directory ? requestExistingPermission : connectFolder);
+  els.notice.innerHTML = '<div class="notice" role="alert">Start WorkLog with npm start, then open http://localhost:4173.</div>';
 }
 
 function getHeader() {
@@ -257,7 +232,7 @@ function getHeader() {
 }
 
 function renderEmpty(title, copy, icon = '＋') {
-  return `<div class="empty-state"><div class="empty-state-inner"><div class="empty-state-icon">${icon}</div><h2>${escapeHTML(title)}</h2><p>${escapeHTML(copy)}</p>${state.connected ? '<button class="primary-btn" data-add-entry>＋ Add entry</button>' : ''}</div></div>`;
+  return `<div class="empty-state"><div class="empty-state-inner"><div class="empty-state-icon">${icon}</div><h2>${escapeHTML(title)}</h2><p>${escapeHTML(copy)}</p>${state.connected ? '<button class="primary-btn" data-add-entry>+ Add entry</button>' : ''}</div></div>`;
 }
 
 function renderWeek() {
@@ -266,15 +241,15 @@ function renderWeek() {
   const entries = sortEntries(week.entries || []);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const hasEntries = entries.length > 0;
-  if (!state.connected && !hasEntries) return renderEmpty('Connect a local folder to begin', 'Your journal stays in portable weekly JSON files on your computer.', '⌂');
-  return `<div class="week-card">${days.map(day => {
+  if (!state.connected && !hasEntries) return renderEmpty('Start the local server to begin', 'Your journal stays in portable weekly JSON files on your computer.', '⌂');
+  return `<div class="week-summary"><span>${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} this week</span><span>Monday – Sunday</span></div><div class="week-card">${days.map(day => {
     const dateKey = toLocalDateInput(day);
     const dayEntries = entries.filter(entry => entry.date === dateKey);
-    return `<section class="day-section">
+    return `<section class="day-section ${dayEntries.length ? 'has-entries' : 'is-empty'} ${isSameDay(day, new Date()) ? 'is-current' : ''}">
       <div class="day-label"><div class="day-name">${formatDate(day, { weekday: 'short' })}</div><div class="day-date">${formatDate(day, { day: 'numeric', month: 'short' })}</div></div>
       <div class="day-entries">${dayEntries.length ? dayEntries.map(renderEntryRow).join('') : '<div class="day-empty">No entries</div>'}</div>
     </section>`;
-  }).join('')}</div><div class="panel" style="margin-top:20px"><div class="setting-row"><div><h2>Weekly reflection</h2><p>Highlights, outcomes, challenges and learnings</p></div><button class="secondary-btn" id="edit-reflection">Edit reflection</button></div>${Object.entries(week.weeklyReflection).map(([key, items]) => detailSection(key[0].toUpperCase() + key.slice(1), items)).join('')}</div>`;
+  }).join('')}</div><section class="panel reflection-panel"><div class="reflection-heading"><div><h2>Weekly reflection</h2><p>A short record of what mattered.</p></div><button class="secondary-btn" id="edit-reflection">Edit reflection</button></div>${Object.values(week.weeklyReflection).some(items => items.length) ? `<div class="reflection-grid">${Object.entries(week.weeklyReflection).map(([key, items]) => detailSection(key[0].toUpperCase() + key.slice(1), items)).join('')}</div>` : '<p class="reflection-empty">Capture your highlights, outcomes, challenges and learnings.</p>'}</section>`;
 }
 
 function renderEntryRow(entry) {
@@ -328,7 +303,7 @@ function renderMonthTab(entries) {
     const rows = monthWeeks.flatMap(week => (week.weeklyReflection?.highlights || []).map(text => ({ week: week.week, text })));
     return rows.length ? `<div class="panel"><h2>Highlights</h2>${rows.map(row => `<div class="setting-row"><div>${escapeHTML(row.text)}</div><div class="entity-meta">${escapeHTML(row.week)}</div></div>`).join('')}</div>` : renderEmpty('No highlights yet', 'Use weekly reflections to capture what mattered most.');
   }
-  return `<div class="grid-cards">${monthWeeks.map(week => `<div class="entity-card"><div><div class="entity-name">${escapeHTML(week.week)}</div><div class="entity-meta">${(week.weeklyReflection?.outcomes || []).length} outcomes · ${(week.weeklyReflection?.learnings || []).length} learnings</div></div></div>`).join('') || '<div class="panel">No weekly reflections yet.</div>'}</div>`;
+  return `<div class="grid-cards">${monthWeeks.map(week => `<div class="entity-card reflection-month-card"><div><div class="entity-name">${escapeHTML(week.week)}</div><div class="entity-meta">${(week.weeklyReflection?.outcomes || []).length} outcomes · ${(week.weeklyReflection?.learnings || []).length} learnings</div></div><div class="reflection-grid">${Object.entries(week.weeklyReflection).map(([key,items]) => detailSection(key[0].toUpperCase() + key.slice(1), items)).join('')}</div></div>`).join('') || '<div class="panel">No weekly reflections yet.</div>'}</div>`;
 }
 
 function renderSearch() {
@@ -381,8 +356,9 @@ function stat(number, label) { return `<div class="stat-card"><div class="stat-n
 
 function renderSettings() {
   const selectedTheme = localStorage.getItem('worklog-theme') || 'system';
+  const storageRow = `<div class="setting-row"><div><div class="setting-title">Local server data</div><div class="setting-copy">Weekly JSON files are saved in the server's data folder.</div></div><span class="setting-copy">${state.connected && !state.readError ? 'Connected' : 'Unavailable'}</span></div>`;
   return `<div class="settings-grid"><div class="panel"><h2>Local storage</h2><p>The weekly JSON files in your chosen folder are the source of truth.</p>
-    <div class="setting-row"><div><div class="setting-title">Worklog folder</div><div class="setting-copy">${state.directory ? escapeHTML(state.directory.name) : 'No folder selected'}</div></div><div class="button-row"><button class="secondary-btn" id="settings-connect">${state.directory ? 'Change folder' : 'Connect folder'}</button>${state.directory ? '<button class="ghost-btn" id="settings-forget">Forget</button>' : ''}</div></div>
+    ${storageRow}
     <div class="setting-row"><div><div class="setting-title">Import / restore JSON</div><div class="setting-copy">Import weekly files or a full backup. Replacements require confirmation; previous versions are retained in history/.</div></div><button class="secondary-btn" id="settings-import" ${state.connected ? '' : 'disabled'}>Import</button></div>
     <div class="setting-row"><div><div class="setting-title">Full backup</div><div class="setting-copy">Download all weekly files as one portable JSON backup.</div></div><button class="secondary-btn" id="settings-backup" ${state.connected ? '' : 'disabled'}>Export backup</button></div>
   </div><div class="panel"><h2>Appearance</h2><p>Choose how WorkLog looks on this browser.</p><div class="field"><label>Theme</label><select id="theme-select"><option value="system" ${selectedTheme==='system'?'selected':''}>System</option><option value="light" ${selectedTheme==='light'?'selected':''}>Light</option><option value="dark" ${selectedTheme==='dark'?'selected':''}>Dark</option></select></div><div class="setting-row"><div><div class="setting-title">Data model</div><div class="setting-copy">Schema version 1 · one JSON file per ISO week</div></div></div><div class="setting-row"><div><div class="setting-title">Keyboard shortcut</div><div class="setting-copy">Press N anywhere outside a form to add an entry.</div></div></div></div></div>`;
@@ -409,8 +385,6 @@ function bindRenderedEvents() {
   document.querySelectorAll('[data-search-topic]').forEach(btn => btn.addEventListener('click', () => { state.search = btn.dataset.searchTopic; state.view='search'; render(); }));
 
   document.querySelector('#edit-reflection')?.addEventListener('click', openReflectionForm);
-  document.querySelector('#settings-connect')?.addEventListener('click', connectFolder);
-  document.querySelector('#settings-forget')?.addEventListener('click', async () => { await forgetDirectory(); state.directory=null; state.connected=false; state.allWeeks=[]; render(); });
   document.querySelector('#settings-import')?.addEventListener('click', importFiles);
   document.querySelector('#settings-backup')?.addEventListener('click', async () => {
     try { downloadBackup(await readAllWeeks(state.directory)); toast('Backup exported.'); }
@@ -447,7 +421,7 @@ async function importFiles() {
 
 function openEntryTypeModal() {
   if (!state.connected) {
-    if (state.directory) requestExistingPermission(); else connectFolder();
+    toast('Start WorkLog with npm start and open http://localhost:4173.', true);
     return;
   }
   setModal(`<div class="modal-backdrop"><div class="modal modal-sm"><div class="modal-header"><h2>Add an entry</h2><button class="close-btn" data-close-modal>×</button></div><div class="modal-body"><div class="entry-type-grid">${Object.entries(ENTRY_META).map(([type, meta]) => `<button class="entry-type-choice" data-entry-type="${type}"><span class="choice-icon ${meta.className}">${meta.icon}</span><span class="choice-label">${meta.label}</span><span class="choice-description">${meta.description}</span></button>`).join('')}</div></div></div></div>`);

@@ -2,75 +2,34 @@ import { createEmptyWeek, getISOWeekInfo, parseLocalDate } from './utils.js';
 import { createBackupPayload, mergeImportDocuments, parseImportDocument } from './backup.js';
 import { normalizeWeek } from './schema.js';
 
-const DB_NAME = 'worklog-local';
-const STORE = 'handles';
-const KEY = 'workspace-directory';
 const BACKUP_DIR = 'backups';
 const RECOVERY_DIR = 'recovery';
 
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore(STORE);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
-}
+// When WorkLog is served by its local Node server, use the server's filesystem
+// API instead of asking the browser for a directory handle. A small sentinel
+// keeps the rest of the storage API unchanged.
+export const supportsLocalServer = typeof window !== 'undefined'
+  && (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+  && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const SERVER_ROOT = Object.freeze({ kind: 'server', name: 'Local WorkLog data' });
+const isServerRoot = root => root?.kind === 'server';
 
-async function idbGet(key) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readonly');
-    const req = tx.objectStore(STORE).get(key);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
+async function serverRequest(path, options = {}) {
+  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+  if (!response.ok) {
+    let message = `${response.status} ${response.statusText}`;
+    try { message = (await response.json()).error || message; } catch {}
+    const error = new Error(message); error.status = response.status; throw error;
+  }
+  return response.status === 204 ? null : response.json();
 }
-
-async function idbSet(key, value) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).put(value, key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-async function idbDelete(key) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite');
-    tx.objectStore(STORE).delete(key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export const supportsFileSystemAccess = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 
 export async function getRememberedDirectory() {
-  if (!supportsFileSystemAccess) return null;
-  try { return await idbGet(KEY); } catch { return null; }
+  return supportsLocalServer ? SERVER_ROOT : null;
 }
 
-export async function chooseDirectory() {
-  if (!supportsFileSystemAccess) throw new Error('Direct folder access is not supported in this browser. Use Microsoft Edge or Google Chrome on desktop.');
-  const handle = await window.showDirectoryPicker({ mode: 'readwrite', id: 'worklog-data' });
-  try { await idbSet(KEY, handle); } catch (error) { console.warn('Folder connected, but could not remember it for next time.', error); }
-  return handle;
-}
-
-export async function forgetDirectory() {
-  await idbDelete(KEY);
-}
-
-export async function ensurePermission(handle, prompt = false) {
-  if (!handle) return false;
-  const options = { mode: 'readwrite' };
-  if ((await handle.queryPermission(options)) === 'granted') return true;
-  if (prompt && (await handle.requestPermission(options)) === 'granted') return true;
-  return false;
+export async function ensurePermission(handle) {
+  return isServerRoot(handle);
 }
 
 async function getYearDirectory(root, year, create = false) {
@@ -167,6 +126,15 @@ async function readWeekHandleWithRecovery(root, weekKey, fileHandle) {
 
 export async function readWeek(root, date) {
   const info = getISOWeekInfo(date);
+  if (isServerRoot(root)) {
+    try {
+      const parsed = await serverRequest(`/api/weeks/${encodeURIComponent(info.key)}`);
+      return verifyWeekKey(normalizeWeek(parsed, info.key), info.key);
+    } catch (error) {
+      if (error.status === 404) return createEmptyWeek(date);
+      throw error;
+    }
+  }
   try {
     const yearDir = await getYearDirectory(root, info.year, false);
     const fileHandle = await yearDir.getFileHandle(`${info.key}.json`, { create: false });
@@ -179,6 +147,13 @@ export async function readWeek(root, date) {
 
 export async function writeWeek(root, inputWeek, { allowRepair = false } = {}) {
   const week = normalizeWeek(inputWeek, 'Week being saved');
+  if (isServerRoot(root)) {
+    await serverRequest(`/api/weeks/${encodeURIComponent(week.week)}`, {
+      method: 'PUT', body: JSON.stringify(week),
+      headers: allowRepair ? { 'X-Worklog-Allow-Repair': 'true' } : {}
+    });
+    return week;
+  }
   const year = Number(week.week.slice(0, 4));
   const yearDir = await getYearDirectory(root, year, true);
   const filename = `${week.week}.json`;
@@ -244,6 +219,10 @@ export async function writeWeek(root, inputWeek, { allowRepair = false } = {}) {
 }
 
 export async function readAllWeeks(root) {
+  if (isServerRoot(root)) {
+    const weeks = await serverRequest('/api/weeks');
+    return weeks.map((week, index) => normalizeWeek(week, `Weekly file ${index + 1}`)).sort((a, b) => a.week.localeCompare(b.week));
+  }
   const weeks = [];
   const failures = [];
   for await (const [yearName, yearHandle] of root.entries()) {
@@ -281,6 +260,14 @@ export async function withWriteLock(action) {
 let pendingWrite = Promise.resolve();
 
 export async function getImportConflicts(root, plan) {
+  if (isServerRoot(root)) {
+    const conflicts = [];
+    for (const week of plan.weeks) {
+      try { await serverRequest(`/api/weeks/${encodeURIComponent(week.week)}`); conflicts.push(week.week); }
+      catch (error) { if (error.status !== 404) throw error; }
+    }
+    return conflicts;
+  }
   const conflicts = [];
   for (const week of plan.weeks) {
     try {

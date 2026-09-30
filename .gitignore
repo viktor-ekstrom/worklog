@@ -4,3 +4,5 @@ worklog-data/
 test-results/
 
 node_modules/
+
+/data/

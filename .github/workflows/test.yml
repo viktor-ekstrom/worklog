@@ -19,9 +19,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run build:standalone
-      - name: Verify committed standalone artifact
-        run: git diff --exit-code -- WorkLog.html
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       - uses: actions/upload-artifact@v4

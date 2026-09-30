@@ -67,8 +67,8 @@ body {
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: 15px;
+  line-height: 1.5;
 }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
@@ -315,3 +315,144 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); box-sha
   .search-result { grid-template-columns: 1fr; }
   .search-result-date { text-align: left; }
 }
+
+/* Consistent, readable journal layout. */
+.app-shell { background: linear-gradient(90deg, var(--sidebar) 220px, var(--bg) 220px); }
+.main { background: var(--bg); }
+.sidebar { padding-top: 24px; }
+.brand { font-size: 19px; padding-bottom: 28px; }
+.brand-mark { width: 30px; height: 30px; }
+.nav-item { min-height: 44px; font-size: 14px; }
+.nav-icon svg { width: 18px; height: 18px; display: block; }
+.topbar { padding: 22px 32px; min-height: 108px; }
+h1 { font-size: 28px; font-weight: 730; letter-spacing: -.035em; }
+#page-subtitle { font-size: 13px; margin-top: 6px; }
+.eyebrow { font-size: 11px; letter-spacing: .1em; }
+.primary-btn, .secondary-btn, .ghost-btn, .danger-btn { min-height: 38px; padding: 8px 13px; }
+.icon-btn { min-height: 38px; width: 38px; }
+.content { padding: 24px 32px 32px; max-width: 1240px; }
+#notice-area { padding-inline: 32px; }
+.week-summary { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+.week-summary span:first-child { color: var(--text); font-weight: 650; }
+.day-label { padding: 10px 14px; display: flex; flex-direction: column; justify-content: center; }
+.day-name { font-size: 14px; }
+.day-date { font-size: 12px; }
+.day-entries { min-height: 0; padding: 3px 0; }
+.day-empty { min-height: 36px; font-size: 13px; }
+.is-empty .day-label { padding-block: 5px; }
+.is-empty .day-name, .is-empty .day-date { display: inline; }
+.is-empty .day-label { flex-direction: row; align-items: center; justify-content: space-between; gap: 8px; }
+.day-section { grid-template-columns: 110px minmax(0,1fr); }
+.is-empty .day-date { font-size: 11px; white-space: nowrap; }
+.is-current .day-label { background: var(--accent-soft); }
+.is-current .day-name { color: var(--accent); }
+.entry-row { grid-template-columns: 48px minmax(0,1fr); gap: 3px 14px; padding: 9px 18px; align-items: start; }
+.entry-row .entry-preview { grid-column: 2; }
+.entry-title-line { gap: 8px; flex-wrap: wrap; }
+.entry-title-text { white-space: normal; overflow-wrap: anywhere; }
+.entry-time { font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 2px; }
+.entry-preview { font-size: 13px; padding-top: 0; }
+.type-pill, .topic-pill { font-size: 11px; padding: 2px 8px; flex-shrink: 0; }
+.reflection-panel { margin-top: 18px; padding: 18px 20px; }
+.reflection-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.panel h2 { font-size: 17px; font-weight: 700; }
+.panel p { font-size: 13px; }
+.reflection-heading p { margin: 0; }
+.reflection-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px 28px; margin-top: 16px; }
+.reflection-grid .detail-section { padding: 0; border: 0; min-width: 0; }
+.reflection-grid .detail-section h3 { font-size: 12px; color: var(--muted); font-weight: 650; margin-bottom: 5px; }
+.reflection-grid .detail-section ul { padding-left: 17px; font-size: 14px; }
+.reflection-empty { margin: 16px 0 0 !important; }
+.today-entry, .month-row, .search-result { text-align: left; color: var(--text); }
+.today-entry { padding: 18px 20px; grid-template-columns: 52px minmax(0,1fr); }
+.today-entry .entry-preview { margin-top: 5px; }
+.month-row { width: 100%; background: var(--panel); border: 0; border-bottom: 1px solid var(--border); padding: 16px 18px; grid-template-columns: 90px 48px minmax(180px,1fr) 110px; }
+.month-row .entry-preview { display: none; }
+.month-row:hover { background: var(--panel-2); }
+.month-date, .month-time { font-size: 12px; }
+.month-tabs { gap: 24px; margin-bottom: 20px; }
+.month-tab { padding-bottom: 12px; font-size: 14px; }
+.reflection-month-card { display: block; }
+.search-toolbar { grid-template-columns: minmax(0,1fr) 180px; align-items: start; }
+.search-toolbar input, .search-toolbar select { min-height: 44px; }
+.search-result { padding: 18px 20px; }
+.search-result-preview, .search-result-date { font-size: 13px; }
+.search-result-top { flex-wrap: wrap; }
+.grid-cards { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; }
+.entity-card { padding: 22px; }
+.entity-name { font-size: 16px; }
+.entity-meta, .stat-label { font-size: 13px; }
+.stat-card { padding: 22px; }
+.stat-number { font-size: 32px; }
+.chart-panel { padding: 24px; }
+.bar-chart { height: 230px; }
+.bar-label { font-size: 12px; }
+.settings-grid { gap: 20px; grid-template-columns: minmax(0,1.25fr) minmax(280px,1fr); }
+.settings-grid .panel { padding: 22px; }
+.setting-copy { font-size: 13px; line-height: 1.55; max-width: 360px; }
+.setting-row { gap: 18px; padding-block: 20px; }
+.setting-row button { flex-shrink: 0; }
+.field label { font-size: 13px; }
+.field-help { font-size: 12px; }
+.detail-section h3 { font-size: 13px; }
+.detail-header-meta, .choice-description { font-size: 13px; }
+.modal-header { padding: 20px 24px; }
+.modal-body { padding: 24px; }
+.modal-header h2 { font-size: 21px; }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+@media (min-width: 901px) {
+  .reflection-month-card { grid-column: span 3; }
+  .settings-grid .setting-row { align-items: flex-start; }
+  .settings-grid .button-row { flex-wrap: nowrap; }
+}
+@media (max-width: 1100px) and (min-width: 901px) {
+  .settings-grid { grid-template-columns: 1fr; }
+  .grid-cards { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .reflection-month-card { grid-column: span 2; }
+}
+@media (max-width: 900px) {
+  .app-shell { background: linear-gradient(90deg,var(--sidebar) 72px,var(--bg) 72px); }
+  .topbar { padding: 20px; }
+  .content, #notice-area { padding-inline: 20px; }
+  .grid-cards { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .month-row { grid-template-columns: 80px 45px minmax(0,1fr) 100px; }
+  .settings-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .app-shell { background: var(--bg); }
+  .sidebar { padding: 6px; height: 72px; }
+  .nav { justify-content: flex-start; overflow-x: auto; }
+  .nav-item, .nav-item[data-view='people'], .nav-item[data-view='topics'], .nav-item[data-view='analytics'] { display: grid; min-width: 68px; min-height: 52px; font-size: 10px; }
+  .sidebar-footer { display: block; margin: 0; flex-shrink: 0; border-left: 1px solid var(--sidebar-active); }
+  .topbar { padding: 18px 14px; flex-wrap: wrap; }
+  h1 { font-size: 25px; }
+  .topbar-actions { width: 100%; }
+  .topbar-actions .icon-btn, .topbar-actions .secondary-btn { display: inline-grid; }
+  #add-btn { margin-left: auto; }
+  .main { padding-bottom: 78px; }
+  .content, #notice-area { padding-inline: 12px; }
+  .day-section { grid-template-columns: 64px minmax(0,1fr); }
+  .day-label, .is-empty .day-label { flex-direction: column; gap: 0; padding: 8px; align-items: flex-start; justify-content: center; }
+  .entry-row { grid-template-columns: minmax(0,1fr); padding: 12px; }
+  .entry-row .entry-preview { grid-column: 1; white-space: normal; }
+  .entry-row .entry-time { padding: 0; font-size: 11px; }
+  .entry-title-line { gap: 5px; }
+  .entry-title-text { width: 100%; font-size: 14px; }
+  .entry-row .topic-pill { display: none; }
+  .reflection-grid, .grid-cards { grid-template-columns: 1fr; }
+  .reflection-panel { padding: 16px; }
+  .reflection-heading { align-items: flex-start; }
+  .reflection-heading .secondary-btn { font-size: 12px; padding-inline: 8px; }
+  .search-toolbar { grid-template-columns: 1fr; }
+  .month-row { grid-template-columns: 65px minmax(0,1fr); gap: 8px; }
+  .month-row > div:nth-child(4) { grid-column: 2; }
+  .month-row-title { white-space: normal; }
+  .setting-row { flex-wrap: wrap; }
+  .toast-root { bottom: 82px; right: 12px; left: 12px; }
+  .toast { min-width: 0; max-width: 100%; }
+}
+/* Keep actions visible while long entry forms scroll. */
+.modal { display: flex; flex-direction: column; overflow: hidden; }
+.modal > form { display: flex; flex-direction: column; min-height: 0; max-height: calc(100vh - 36px); }
+.modal-header, .modal-footer { flex-shrink: 0; }
+.modal-body { min-height: 0; overflow-y: auto; }

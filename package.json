@@ -5,11 +5,10 @@
   "type": "module",
   "description": "Local-first professional work journal with one portable JSON file per ISO week.",
   "scripts": {
-    "dev": "node server.mjs",
     "start": "node server.mjs",
     "test": "node --test test/*.test.js",
-    "build:standalone": "node scripts/build-standalone.mjs",
-    "test:browser": "node scripts/browser-test.mjs"
+    "test:browser": "node scripts/browser-test.mjs",
+    "screenshots": "node scripts/capture-pages.mjs"
   },
   "engines": {
     "node": ">=20"

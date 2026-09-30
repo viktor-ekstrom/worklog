@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -14,31 +14,13 @@ const browser = await chromium.launch({headless:true, ...(process.env.CHROMIUM_P
 const context = await browser.newContext({viewport:{width:1440,height:1000}, timezoneId:'Europe/Stockholm',acceptDownloads:true});
 const errors=[];const results=[];
 const page=await context.newPage();await page.clock.setFixedTime(new Date('2026-09-30T08:00:00+02:00'));page.on('pageerror',e=>errors.push(e.message));
-// Only the native picker/handle boundary is substituted. Operations use real temporary files.
-await context.exposeBinding('fileBridge', async (_, op, relative, value) => {
-  try {
-    const full=path.resolve(data,relative || '.');
-    if(full!==data && !full.startsWith(data+path.sep))throw new Error('Invalid test path');
-    if(op==='dir'){if(value)await fs.mkdir(full,{recursive:true});const stat=await fs.stat(full);if(!stat.isDirectory())throw new Error('Not directory');}
-    if(op==='file'){if(value)await fs.writeFile(full,'',{flag:'wx'}).catch(e=>{if(e.code!=='EEXIST')throw e});await fs.stat(full);}
-    if(op==='read')return {value:await fs.readFile(full,'utf8')};
-    if(op==='write'){if(failWrite && relative.endsWith(failWrite))throw new Error('Simulated write failure');await fs.writeFile(full,value);}
-    if(op==='remove')await fs.rm(full);
-    if(op==='entries')return {value:(await fs.readdir(full,{withFileTypes:true})).map(e=>[e.name,e.isDirectory()?'directory':'file'])};
-    return {value:null};
-  } catch(error){return {error:error.message,name:error.code==='ENOENT'?'NotFoundError':'Error'}}
-});
-await context.addInitScript(() => {
-  async function call(op,path,value){const r=await window.fileBridge(op,path,value);if(r.error){const e=new Error(r.error);e.name=r.name;throw e}return r.value}
-  function handle(p,kind){return {kind,name:p.split('/').pop()||'WorkLog test folder',queryPermission:async()=> 'granted',requestPermission:async()=> 'granted',
-    async getDirectoryHandle(name,options={}){const n=p?p+'/'+name:name;await call('dir',n,options.create);return handle(n,'directory')},
-    async getFileHandle(name,options={}){const n=p?p+'/'+name:name;await call('file',n,options.create);return handle(n,'file')},
-    async removeEntry(name){await call('remove',p?p+'/'+name:name)},
-    async getFile(){const text=await call('read',p);return new File([text],this.name,{type:'application/json'})},
-    async createWritable(){let text;return {write:async v=>{text=v},close:async()=>call('write',p,text),abort:async()=>{}}},
-    async *entries(){for(const [name,k]of await call('entries',p))yield[name,handle(p?p+'/'+name:name,k)]}
-  }}
-  window.showDirectoryPicker=async()=>handle('','directory');
+// Exercise the real localhost backend against disposable data.
+const server=spawn(process.execPath,['server.mjs'],{cwd:root,env:{...process.env,PORT:'4178',WORKLOG_DATA_DIR:data},stdio:'pipe'});
+await new Promise((resolve,reject)=>{server.stdout.once('data',resolve);server.once('error',reject);server.once('exit',code=>reject(new Error(`Test server exited: ${code}`)));});
+await context.route('**/api/weeks/*',async route=>{
+ if(failWrite && route.request().method()==='PUT' && route.request().url().endsWith(failWrite.replace('.json',''))){
+  await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Simulated write failure'})});
+ } else await route.continue();
 });
 const check=async(name,fn)=>{await fn();results.push(name);console.log('PASS',name)};
 const clickNav=async view=>{await page.locator('.nav-item[data-view="'+view+'"]').click();await page.locator('#content[data-view="'+view+'"]').waitFor();};
@@ -53,11 +35,10 @@ const add=async(type,title,date='2026-09-30',extras={})=>{
  await page.getByRole('button',{name:'Save',exact:true}).click();await waitSaved();
 };
 const openEntry=async title=>{await clickNav('search');await page.locator('#search-input').fill(title);await page.locator('.search-result').filter({hasText:title}).first().click();};
-let server;
 try {
- await page.goto(pathToFileURL(path.join(root,'WorkLog.html')).href);
- await check('Standalone file opens without server',async()=>{await page.getByRole('button',{name:'Connect folder',exact:true}).waitFor();assert.equal(errors.length,0);await screenshot('01-first-run');});
- await page.getByRole('button',{name:'Connect folder',exact:true}).click();
+ await page.goto('http://127.0.0.1:4178');
+ await check('Server opens ready to add entries without folder permission',async()=>{await page.locator('#edit-reflection').waitFor();assert.equal(await page.getByRole('button',{name:'Connect folder',exact:true}).count(),0);assert.equal(errors.length,0);await screenshot('01-first-run');});
+ await page.locator('#edit-reflection').waitFor();
  await page.locator('#edit-reflection').waitFor();
  await check('Create all six entry types and write weekly JSON',async()=>{
    await add('meeting','Architecture sync','2026-09-30',{discussion:'Storage safety\nOffline access',contribution:'Proposed recovery design',decisions:'Keep portable JSON',followUps:'Review rollout | PLAT-42',references:'https://example.com/design'});
@@ -121,46 +102,32 @@ try {
  });
  await check('Delete confirmation and persistence after reopen',async()=>{
    await openEntry('Remember the demo');await page.getByRole('button',{name:'Edit',exact:true}).click();page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Delete',exact:true}).click();await waitSaved();assert.equal((await getWeek('2026-W41')).entries.length,0);
-   await page.reload();await page.getByRole('button',{name:'Connect folder',exact:true}).click();await clickNav('search');await page.locator('#search-input').fill('Architecture sync');assert.equal(await page.locator('.search-result').count(),1);
+   await page.reload();await page.locator('#edit-reflection').waitFor();await clickNav('search');await page.locator('#search-input').fill('Architecture sync');assert.equal(await page.locator('.search-result').count(),1);
  });
  await check('Today navigation moves one day',async()=>{
    await clickNav('today');const before=await page.locator('#page-subtitle').innerText();await page.locator('#next-btn').click();await page.waitForFunction(before=>document.querySelector('#page-subtitle').textContent!==before,before);const after=await page.locator('#page-subtitle').innerText();assert.equal((Date.parse(after)-Date.parse(before))/86400000,1);
  });
  await check('Unreadable week blocks backup with visible warning',async()=>{
    await clickNav('settings');await fs.writeFile(path.join(data,'2026','2026-W42.json'),'{broken');
-   await page.locator('#settings-backup').click();await page.locator('#notice-area').getByText(/No complete backup/).waitFor();await screenshot('10-backup-blocked');await fs.rm(path.join(data,'2026','2026-W42.json'));
+   await page.locator('#settings-backup').click();await page.locator('#notice-area').getByText(/invalid JSON/).waitFor();await screenshot('10-backup-blocked');await fs.rm(path.join(data,'2026','2026-W42.json'));
  });
  await check('Responsive layout and keyboard shortcut',async()=>{
    await clickNav('week');await page.setViewportSize({width:390,height:844});await screenshot('11-mobile-layout');
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.setViewportSize({width:1440,height:1000});
    await page.locator('#page-title').click();await page.keyboard.press('n');await page.getByRole('heading',{name:'Add an entry'}).waitFor();await page.keyboard.press('Escape');
  });
- // Hosted modules, actual browser FileSystemDirectoryHandles (OPFS), IndexedDB reconnect.
- server=spawn(process.execPath,['server.mjs'],{cwd:root,env:{...process.env,PORT:'4178'},stdio:'pipe'});
- await new Promise((resolve,reject)=>{server.stdout.once('data',resolve);server.once('error',reject);});
- const nativeContext=await browser.newContext({viewport:{width:1440,height:1000}});
- await nativeContext.addInitScript(()=>{window.showDirectoryPicker=()=>navigator.storage.getDirectory()});
- const native=await nativeContext.newPage();native.on('pageerror',e=>errors.push(e.message));await native.goto('http://127.0.0.1:4178');
- await check('Hosted modules with native file handles, writes and remembered reconnect',async()=>{
-   await native.getByRole('button',{name:'Connect folder',exact:true}).click();await native.locator('#edit-reflection').waitFor();
-   await native.locator('#add-btn').click();await native.locator('[data-entry-type="note"]').click();await native.getByLabel('Title',{exact:true}).fill('Native file handle check');await native.getByRole('button',{name:'Save',exact:true}).click();await native.locator('#entry-form').waitFor({state:'detached'});
-   await native.getByText('Native file handle check',{exact:true}).waitFor();
-   await native.reload();await native.getByText('Native file handle check',{exact:true}).waitFor();
-   await native.screenshot({path:path.join(output,'12-native-handles.png'),fullPage:true});
- });
+ const nativeContext=context; const native=page;
+ await clickNav('week');
+ await add('note','Server persistence check');
  await check('Stale edits are rejected across actual browser tabs',async()=>{
-   await native.getByText('Native file handle check',{exact:true}).click();await native.getByRole('button',{name:'Edit',exact:true}).click();
-   const other=await nativeContext.newPage();other.on('pageerror',e=>errors.push(e.message));await other.goto('http://127.0.0.1:4178');
-   await other.getByText('Native file handle check',{exact:true}).click();await other.getByRole('button',{name:'Edit',exact:true}).click();
+   await native.getByText('Server persistence check',{exact:true}).click();await native.getByRole('button',{name:'Edit',exact:true}).click();
+   const other=await nativeContext.newPage();other.on('pageerror',e=>errors.push(e.message));await other.clock.setFixedTime(new Date('2026-09-30T08:00:00+02:00'));await other.goto('http://127.0.0.1:4178');
+   await other.getByText('Server persistence check',{exact:true}).click();await other.getByRole('button',{name:'Edit',exact:true}).click();
    await other.getByLabel('Title',{exact:true}).fill('Changed in another tab');await other.getByRole('button',{name:'Save',exact:true}).click();await other.locator('#entry-form').waitFor({state:'detached'});
    await native.getByLabel('Title',{exact:true}).fill('Stale overwrite');await native.getByRole('button',{name:'Save',exact:true}).click();await native.getByText(/This entry changed in another tab/).waitFor();
    native.once('dialog',d=>d.accept());await native.getByRole('button',{name:'Cancel',exact:true}).click();await other.close();
  });
- await check('Forget folder and reconnect preserve files',async()=>{
-   await native.locator('[data-view="settings"]').click();await native.locator('#settings-forget').click();await native.getByText('No folder selected',{exact:true}).waitFor();
-   await native.locator('#settings-connect').click();await native.locator('.nav-item[data-view="week"]').click();await native.getByText('Changed in another tab',{exact:true}).waitFor();
- });
- await nativeContext.close();assert.deepEqual(errors,[]);
- await fs.writeFile(path.join(output,'results.json'),JSON.stringify({browser:browser.version(),passed:results,errors,nativePicker:'Automated boundary; Windows dialog requires manual validation'},null,2));
+ assert.deepEqual(errors,[]);
+ await fs.writeFile(path.join(output,'results.json'),JSON.stringify({browser:browser.version(),passed:results,errors,storage:'Real localhost API with temporary JSON files'},null,2));
  console.log(`${results.length} browser scenarios passed; no uncaught page errors. Screenshots: ${output}`);
 } finally {await browser.close();server?.kill();await fs.rm(data,{recursive:true,force:true});}
